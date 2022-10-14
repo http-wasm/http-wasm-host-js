@@ -1,8 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "exclude": [
-    "dist/**/*",
-    "test/**/*"
+    "dist/**/*"
   ],
   "compilerOptions": {
     "rootDir": ".",                                  /* Specify the root folder within your source files. */
