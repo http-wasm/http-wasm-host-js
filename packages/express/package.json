@@ -8,7 +8,7 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "rimraf dist && tsc",
     "check": "npm run lint && prettier --check **/*.ts",
     "dev": "node --experimental-wasi-unstable-preview1 --loader ts-node/esm -r ts-node/register test/example.ts",
     "fix": "npm run lint:fix && prettier --write **/*.ts",
