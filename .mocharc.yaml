@@ -1,0 +1,5 @@
+node-option:
+  - experimental-wasi-unstable-preview1
+  - loader=ts-node/esm
+require:
+  - ts-node/register
