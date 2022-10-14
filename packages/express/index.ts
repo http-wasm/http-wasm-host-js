@@ -53,9 +53,12 @@ class HttpHandler {
   public getImport() {
     return {
       get_request_header: this.getRequestHeader.bind(this),
+      get_uri: this.getUri.bind(this),
       next: this.next.bind(this),
+      set_response_body: this.setResponseBody.bind(this),
       set_response_header: this.setResponseHeader.bind(this),
       set_status_code: this.setStatusCode.bind(this),
+      set_uri: this.setUri.bind(this),
     };
   }
 
@@ -79,13 +82,28 @@ class HttpHandler {
       return 0n;
     }
 
-    return (1n << 32n) | this.writeStringIfUnderLimit(buf, bufLimit, v);
+    return (1n << 32n) | BigInt(this.writeStringIfUnderLimit(buf, bufLimit, v));
+  }
+
+  private getUri(buf: number, bufLimit: number): number {
+    const uri = stateStorage.getStore()!.request.url;
+    return this.writeStringIfUnderLimit(buf, bufLimit, uri);
   }
 
   private next() {
     const state = stateStorage.getStore()!;
     state.next();
     state.nextCalled = true;
+  }
+
+  private setResponseBody(body: number, bodyLen: number) {
+    let b: Uint8Array;
+    if (bodyLen == 0) {
+      b = emptyBuffer;
+    } else {
+      b = this.mustRead('body', body, bodyLen);
+    }
+    stateStorage.getStore()!.response.send(Buffer.from(b));
   }
 
   private setResponseHeader(
@@ -105,6 +123,14 @@ class HttpHandler {
 
   private setStatusCode(statusCode: number): void {
     stateStorage.getStore()!.response.status(statusCode);
+  }
+
+  private setUri(uri: number, uriLen: number) {
+    let u = '';
+    if (uriLen > 0) {
+      u = this.mustReadString('uri', uri, uriLen);
+    }
+    stateStorage.getStore()!.request.url = u;
   }
 
   private mustReadString(
@@ -142,11 +168,11 @@ class HttpHandler {
     offset: number,
     limit: number,
     v: string,
-  ): bigint {
+  ): number {
     const buf = Buffer.from(v);
 
-    const vLen = BigInt.asUintN(32, BigInt(buf.length));
-    if (vLen > limit || vLen == 0n) {
+    const vLen = buf.length;
+    if (vLen > limit || vLen == 0) {
       return vLen;
     }
 
