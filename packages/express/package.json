@@ -3,13 +3,18 @@
   "version": "0.1.0",
   "description": "http-wasm middle for Express",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "scripts": {
+    "build": "tsc",
     "check": "npm run lint && prettier --check **/*.ts",
+    "dev": "node --experimental-wasi-unstable-preview1 --loader ts-node/esm -r ts-node/register test/example.ts",
     "fix": "npm run lint:fix && prettier --write **/*.ts",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
-    "dev": "node --experimental-wasi-unstable-preview1 --loader ts-node/esm -r ts-node/register test/example.ts",
+    "prepublish": "npm run build",
     "test": "c8 mocha test/**/*.ts"
   },
   "author": "http-wasm <js@http-wasm.io>",
