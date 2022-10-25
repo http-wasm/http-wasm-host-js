@@ -2,33 +2,35 @@
 ;; how a handler works and that it is decoupled from other ABI such as WASI.
 ;; Most users will prefer a higher-level language such as C, Rust or TinyGo.
 (module $router
-  ;; get_uri writes the request URI value to memory, if it isn't larger than
-  ;; the buffer size limit. The result is the actual URI length in bytes.
-  (import "http-handler" "get_uri" (func $get_uri
+  ;; get_uri writes the URI to memory if it isn't larger than $buf_limit. The
+  ;; result is its length in bytes.
+  (import "http_handler" "get_uri" (func $get_uri
     (param $buf i32) (param $buf_limit i32)
     (result (; len ;) i32)))
 
-  ;; set_uri overwrites the request URI with one read from memory.
-  (import "http-handler" "set_uri" (func $set_uri
+  ;; set_uri overwrites the URI with one read from memory.
+  (import "http_handler" "set_uri" (func $set_uri
     (param $uri i32) (param $uri_len i32)))
 
   ;; next dispatches control to the next handler on the host.
-  (import "http-handler" "next" (func $next))
+  (import "http_handler" "next" (func $next))
 
-  ;; set_response_header sets a response header from a name and value read
-  ;; from memory
-  (import "http-handler" "set_response_header" (func $set_response_header
+  ;; set_header_value overwrites a header of the given $kind and $name with a
+  ;; single value.
+  (import "http_handler" "set_header_value" (func $set_header_value
+    (param $kind i32)
     (param $name i32) (param $name_len i32)
     (param $value i32) (param $value_len i32)))
 
-  ;; set_response_body overwrites the response body with a value read from memory.
-  (import "http-handler" "set_response_body" (func $set_response_body
-    (param $body i32)
-    (param $body_len i32)))
+  ;; write_body reads $buf_len bytes at memory offset `buf` and writes them to
+  ;; the pending $kind body.
+  (import "http_handler" "write_body" (func $write_body
+    (param $kind i32)
+    (param $buf i32) (param $buf_len i32)))
 
-  ;; http-wasm guests are required to export "memory", so that imported
+  ;; http_handler guests are required to export "memory", so that imported
   ;; functions like "log" can read memory.
-  (memory (export "memory") 1 (; 1 page==64KB ;))
+  (memory (export "memory") 1 1 (; 1 page==64KB ;))
 
   ;; uri is an arbitrary area to write data.
   (global $uri       i32 (i32.const 1024))
@@ -62,7 +64,7 @@
       (call $get_uri (global.get $uri) (global.get $uri_limit)))
 
     ;; if uri_len > uri_limit { next() }
-    (if (i32.gt_s (local.get $uri_len) (global.get $uri_limit))
+    (if (i32.gt_u (local.get $uri_len) (global.get $uri_limit))
       (then
         (call $next)
         (return))) ;; dispatch if the uri is too long.
@@ -70,7 +72,7 @@
     ;; Next, strip any paths starting with '/host' and dispatch.
 
     ;; if path_prefix_len <= uri_len
-    (if (i32.eqz (i32.gt_s (global.get $path_prefix_len) (local.get $uri_len)))
+    (if (i32.eqz (i32.gt_u (global.get $path_prefix_len) (local.get $uri_len)))
       (then
 
         (if (call $memeq ;; uri[0:path_prefix_len] == path_prefix
@@ -85,12 +87,14 @@
             (return))))) ;; dispatch with the stripped path.
 
     ;; Otherwise, serve a static response.
-    (call $set_response_header
+    (call $set_header_value
+      (i32.const 1) ;; header_kind_response
       (global.get $content_type_name)
       (global.get $content_type_name_len)
       (global.get $content_type_value)
       (global.get $content_type_value_len))
-    (call $set_response_body
+    (call $write_body
+      (i32.const 1) ;; body_kind_response
       (global.get $body)
       (global.get $body_len)))
 
@@ -111,7 +115,7 @@
       (local.set $len (i32.sub (local.get $len) (i32.const 1))) ;; $len--
 
       ;; if $len > 0 { continue } else { break }
-      (br_if $len_gt_zero (i32.gt_s (local.get $len) (i32.const 0))))
+      (br_if $len_gt_zero (i32.gt_u (local.get $len) (i32.const 0))))
 
     (i32.const 1)) ;; return 1
 )

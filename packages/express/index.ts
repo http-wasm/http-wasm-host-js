@@ -8,6 +8,18 @@ interface Options {
   wasmPath: string;
 }
 
+enum HeaderKind {
+  REQUEST = 0,
+  RESPONSE = 1,
+  REQUEST_TRAILERS = 2,
+  RESPONSE_TRAILERS = 3,
+}
+
+enum BodyKind {
+  REQUEST = 0,
+  RESPONSE = 1,
+}
+
 class RequestState {
   private _request: Request;
   private _response: Response;
@@ -52,13 +64,13 @@ class HttpHandler {
 
   public getImport() {
     return {
-      get_request_header: this.getRequestHeader.bind(this),
+      get_header_values: this.getHeaderValues.bind(this),
       get_uri: this.getUri.bind(this),
       next: this.next.bind(this),
-      set_response_body: this.setResponseBody.bind(this),
-      set_response_header: this.setResponseHeader.bind(this),
+      set_header_value: this.setHeader.bind(this),
       set_status_code: this.setStatusCode.bind(this),
       set_uri: this.setUri.bind(this),
+      write_body: this.writeBody.bind(this),
     };
   }
 
@@ -66,7 +78,8 @@ class HttpHandler {
     this.memory = new Uint8Array(memory.buffer);
   }
 
-  private getRequestHeader(
+  private getHeaderValues(
+    kind: HeaderKind,
     name: number,
     nameLen: number,
     buf: number,
@@ -75,14 +88,28 @@ class HttpHandler {
     if (nameLen == 0) {
       throw new Error('HTTP header name cannot be empty');
     }
-
-    const n = this.mustReadString('name', name, nameLen);
-    const v = stateStorage.getStore()!.request.header(n);
-    if (!v) {
-      return 0n;
+    if (kind !== HeaderKind.REQUEST) {
+      throw new Error('TODO: Support non-request get_header_values');
     }
 
-    return (1n << 32n) | BigInt(this.writeStringIfUnderLimit(buf, bufLimit, v));
+    const n = this.mustReadString('name', name, nameLen);
+    const req = stateStorage.getStore()!.request;
+    let values: string[] = [];
+    // NodeJS only returns multiple values for set-cookie, others will have values concatenated by comma.
+    // TODO(anuraaga): Understand if we need to unconcatenate commas.
+    if (n === 'set-cookie') {
+      const v = req.header('set-cookie');
+      if (v) {
+        values = v;
+      }
+    } else {
+      const v = req.header(n);
+      if (v) {
+        values = [v];
+      }
+    }
+
+    return this.writeNullTerminated(buf, bufLimit, values);
   }
 
   private getUri(buf: number, bufLimit: number): number {
@@ -96,17 +123,23 @@ class HttpHandler {
     state.nextCalled = true;
   }
 
-  private setResponseBody(body: number, bodyLen: number) {
+  private writeBody(kind: BodyKind, body: number, bodyLen: number) {
+    if (kind !== BodyKind.RESPONSE) {
+      throw new Error('TODO: Support non-response write_body');
+    }
+
     let b: Uint8Array;
     if (bodyLen == 0) {
       b = emptyBuffer;
     } else {
       b = this.mustRead('body', body, bodyLen);
     }
-    stateStorage.getStore()!.response.send(Buffer.from(b));
+    const response = stateStorage.getStore()!.response;
+    response.write(Buffer.from(b));
   }
 
-  private setResponseHeader(
+  private setHeader(
+    kind: HeaderKind,
     name: number,
     nameLen: number,
     value: number,
@@ -114,6 +147,9 @@ class HttpHandler {
   ): void {
     if (nameLen == 0) {
       throw new Error('HTTP header name cannot be empty');
+    }
+    if (kind !== HeaderKind.RESPONSE) {
+      throw new Error('TODO: Support non-response set_header');
     }
 
     const n = this.mustReadString('name', name, nameLen);
@@ -179,12 +215,43 @@ class HttpHandler {
     this.memory.set(buf, offset);
     return vLen;
   }
+
+  private writeNullTerminated(
+    buf: number,
+    bufLimit: number,
+    input: string[],
+  ): bigint {
+    const count = BigInt(input.length);
+    if (count === 0n) {
+      return 0n;
+    }
+
+    const encodedInput = input.map((i) => Buffer.from(i));
+    const byteCount = encodedInput.reduce((acc, i) => acc + i.length + 1, 0);
+
+    const countLen = (count << 32n) | BigInt(byteCount);
+
+    if (byteCount > bufLimit) {
+      return countLen;
+    }
+
+    let offset = 0;
+    for (const s of encodedInput) {
+      const sLen = s.length;
+      this.memory.set(s, buf + offset);
+      offset += sLen;
+      this.memory[buf + offset] = 0;
+      offset++;
+    }
+
+    return countLen;
+  }
 }
 
 const host = (wasi: WASI, httpHandler: HttpHandler) => {
   return {
     wasi_snapshot_preview1: wasi.wasiImport,
-    'http-handler': httpHandler.getImport(),
+    http_handler: httpHandler.getImport(),
   };
 };
 
