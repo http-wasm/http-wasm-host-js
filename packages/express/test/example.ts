@@ -5,6 +5,7 @@ import { assert } from 'chai';
 import express, { Request, Response } from 'express';
 import { after, describe, it } from 'mocha';
 import fetch from 'node-fetch';
+import sinon from 'sinon';
 
 import httpwasm from '../index.js';
 
@@ -96,6 +97,64 @@ describe('auth middleware', async function () {
     });
     assert.equal(response.status, 401);
     assert.notExists(response.headers.get('www-authenticate'));
+  });
+});
+
+describe('log middleware', async () => {
+  const wasmPath = '../../examples/log.wasm';
+
+  let server: http.Server;
+  let url: string;
+
+  before(async () => {
+    // Initialize the express server.
+    const app = express();
+
+    // Configure and compile the WebAssembly guest binary. In this case,
+    // it is an auth interceptor.
+    const mw = await httpwasm({ wasmPath });
+
+    // Register the middleware with the express server.
+    app.use(mw);
+
+    // Avoid adding express middleware to collect body to make sure
+    // httpwasm middleware does not rely on it.
+
+    // Register the real request handler.
+    app.get('/*', serveJson);
+
+    // Start the server and wait for it to be ready.
+    await new Promise((resolve) => {
+      server = app.listen(0, () => resolve(undefined));
+    });
+
+    const address = server.address() as AddressInfo;
+    url = `http://127.0.0.1:${address.port}`;
+  });
+
+  // Shutdown server after tests finish.
+  after(
+    () =>
+      new Promise((resolve, reject) => {
+        server.close((err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(undefined);
+          }
+        });
+      }),
+  );
+
+  it('logs', async () => {
+    const spy = sinon.stub(console, 'info');
+
+    const response = await fetch(url);
+    const content = await response.text();
+    // next not called so no response
+    assert.isEmpty(content);
+
+    assert.isTrue(spy.calledWith('hello world'));
   });
 });
 

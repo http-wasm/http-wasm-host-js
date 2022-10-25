@@ -20,6 +20,14 @@ enum BodyKind {
   RESPONSE = 1,
 }
 
+enum LogLevel {
+  DEBUG = -1,
+  INFO = 0,
+  WARN = 1,
+  ERROR = 2,
+  NONE = 3,
+}
+
 class RequestState {
   private _request: Request;
   private _response: Response;
@@ -66,6 +74,8 @@ class HttpHandler {
     return {
       get_header_values: this.getHeaderValues.bind(this),
       get_uri: this.getUri.bind(this),
+      log: this.log.bind(this),
+      log_enabled: this.logEnabled.bind(this),
       next: this.next.bind(this),
       set_header_value: this.setHeader.bind(this),
       set_status_code: this.setStatusCode.bind(this),
@@ -115,6 +125,32 @@ class HttpHandler {
   private getUri(buf: number, bufLimit: number): number {
     const uri = stateStorage.getStore()!.request.url;
     return this.writeStringIfUnderLimit(buf, bufLimit, uri);
+  }
+
+  private log(level: LogLevel, buf: number, bufLimit: number) {
+    const s = this.mustReadString('log', buf, bufLimit);
+    switch (level) {
+      case LogLevel.DEBUG:
+        console.debug(s);
+        break;
+      case LogLevel.INFO:
+        console.info(s);
+        break;
+      case LogLevel.WARN:
+        console.warn(s);
+        break;
+      case LogLevel.ERROR:
+        console.error(s);
+        break;
+    }
+  }
+
+  // There is no standard logging library in express, for now just enable non-debug logging always.
+  private logEnabled(level: LogLevel): number {
+    if (level !== LogLevel.DEBUG) {
+      return 1;
+    }
+    return 0;
   }
 
   private next() {
