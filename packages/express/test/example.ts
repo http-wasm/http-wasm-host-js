@@ -20,7 +20,7 @@ const servePath = (req: Request, res: Response) => {
 };
 
 describe('auth middleware', async function () {
-  const wasmPath = '../../testdata/examples/auth.wasm';
+  const wasmPath = '../../examples/auth.wasm';
 
   let server: http.Server;
   let url: string;
@@ -100,7 +100,7 @@ describe('auth middleware', async function () {
 });
 
 describe('router middleware', async function () {
-  const wasmPath = '../../testdata/examples/router.wasm';
+  const wasmPath = '../../examples/router.wasm';
 
   let server: http.Server;
   let url: string;
