@@ -83,8 +83,7 @@
           (global.get $required_features)))
       (then unreachable)))
 
-  (start $main)
-  (func $main
+  (func $_start (export "_start")
     (call $enable_buffering)
     (call $read_secret))
 
