@@ -67,7 +67,6 @@ class MiddlewareState {
 class RequestState {
   private _request: Request;
   private _response: Response;
-  private _next: NextFunction;
   private _nextCalled = false;
   private _features?: Features;
   private _requestBodyReadIndex = 0;
@@ -75,14 +74,9 @@ class RequestState {
   private _requestBodyReplaced = false;
   private _responseBodyReplaced = false;
 
-  public constructor(request: Request, response: Response, next: NextFunction) {
+  public constructor(request: Request, response: Response) {
     this._request = request;
     this._response = response;
-    this._next = next;
-  }
-
-  public next() {
-    this._next();
   }
 
   public get nextCalled(): boolean {
@@ -237,7 +231,6 @@ class HttpHandler {
       get_uri: this.getUri.bind(this),
       log: this.log.bind(this),
       log_enabled: this.logEnabled.bind(this),
-      next: this.next.bind(this),
       read_body: this.readBody.bind(this),
       set_header_value: this.setHeader.bind(this),
       set_status_code: this.setStatusCode.bind(this),
@@ -387,12 +380,6 @@ class HttpHandler {
       return 1;
     }
     return 0;
-  }
-
-  private next() {
-    const state = stateStorage.getStore()!;
-    state.next();
-    state.nextCalled = true;
   }
 
   private readBody(kind: BodyKind, buf: number, bufLimit: number): bigint {
@@ -596,7 +583,10 @@ export default async (options: Options) => {
     );
     httpHandler.setMemory(instance.exports['memory'] as WebAssembly.Memory);
 
-    const handle = instance.exports['handle'] as () => void;
+    const handleRequest = instance.exports['handle_request'] as () => bigint;
+    const handleResponse = instance.exports['handle_response'] as (
+      reqCtx: number,
+    ) => void;
 
     if (instance.exports['_start']) {
       wasi.start(instance);
@@ -612,13 +602,19 @@ export default async (options: Options) => {
         if (mwState.features.has(Feature.BUFFER_RESPONSE)) {
           bufferResponse(res);
         }
-        const state = new RequestState(req, res, next);
+        const state = new RequestState(req, res);
         stateStorage.run(state, () => {
-          handle();
-          if (!state.nextCalled) {
+          const ctxNext = handleRequest();
+          if ((ctxNext & 0x1n) !== 0x1n) {
             // wasm populated a response so end it.
             res.end();
-          } else if (mwState.features.has(Feature.BUFFER_RESPONSE)) {
+          } else {
+            next();
+            state.nextCalled = true;
+            const ctx = Number(ctxNext >> 32n);
+            handleResponse(ctx);
+          }
+          if (mwState.features.has(Feature.BUFFER_RESPONSE)) {
             (res as BufferedResponse).buffer.release();
           }
         });

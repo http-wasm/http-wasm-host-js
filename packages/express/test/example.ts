@@ -157,7 +157,7 @@ describe('log middleware', async () => {
     const response = await fetch(url);
     const content = await response.text();
     // next not called so no response
-    assert.isEmpty(content);
+    assert.equal(content, responseBody);
 
     assert.isTrue(spy.calledWith('hello world'));
   });
