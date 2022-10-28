@@ -34,13 +34,13 @@ enum LogLevel {
   NONE = 3,
 }
 
-enum Feature {
+export enum Feature {
   BUFFER_REQUEST = 1 << 0,
   BUFFER_RESPONSE = 1 << 1,
   TRAILERS = 1 << 2,
 }
 
-class Features {
+export class Features {
   private features: number;
 
   constructor(features: number) {
@@ -233,6 +233,7 @@ class HttpHandler {
       log_enabled: this.logEnabled.bind(this),
       read_body: this.readBody.bind(this),
       set_header_value: this.setHeader.bind(this),
+      set_method: this.setMethod.bind(this),
       set_status_code: this.setStatusCode.bind(this),
       set_uri: this.setUri.bind(this),
       write_body: this.writeBody.bind(this),
@@ -416,6 +417,12 @@ class HttpHandler {
       return (1n << 32n) | BigInt(slice.length);
     }
     return BigInt(slice.length);
+  }
+
+  private setMethod(name: number, nameLen: number) {
+    const req = stateStorage.getStore()!.request;
+    const method = this.mustReadString('method', name, nameLen);
+    req.method = method;
   }
 
   private writeBody(kind: BodyKind, body: number, bodyLen: number) {
