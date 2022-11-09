@@ -20,5 +20,5 @@ wasted energy in the case that the concept isn't acceptable at all.
 
 [1]: https://github.com/http-wasm
 [2]: https://webassembly.org/
-[3]: https://github.com/http-wasm/http-wasm-abi/blob/main/http-handler/http-handler.wit.md
+[3]: https://http-wasm.io/http-handler-abi/
 [4]: https://expressjs.com/
