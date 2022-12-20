@@ -1,5 +1,3 @@
-import util from 'node:util';
-import { execFile as nodeExecFile } from 'node:child_process';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -11,11 +9,11 @@ import { assert } from 'chai';
 
 import httpwasm from '../index.js';
 
-const execFile = util.promisify(nodeExecFile);
-
 const tckImage = 'ghcr.io/http-wasm/http-wasm-tck:sha-e25f1a2';
 
 describe('tck', async function () {
+  this.timeout(10000);
+
   let server: http.Server;
   let port: number;
 
@@ -105,5 +103,5 @@ describe('tck', async function () {
     });
 
     assert.isFalse(failed);
-  }).timeout(10000);
+  });
 });
