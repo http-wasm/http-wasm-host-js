@@ -25,6 +25,7 @@
     "raw-body": "^2.5.1"
   },
   "devDependencies": {
-    "@types/express": "^4.17.14"
+    "@types/express": "^4.17.14",
+    "testcontainers": "^9.1.1"
   }
 }
