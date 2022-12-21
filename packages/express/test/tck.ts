@@ -11,8 +11,10 @@ import httpwasm from '../index.js';
 
 const tckImage = 'ghcr.io/http-wasm/http-wasm-tck:sha-e25f1a2';
 
+const longTestTimeoutMillis = 10000;
+
 describe('tck', async function () {
-  this.timeout(10000);
+  this.timeout(longTestTimeoutMillis);
 
   let server: http.Server;
   let port: number;
