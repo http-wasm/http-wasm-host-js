@@ -394,7 +394,9 @@ describe('wasi middleware', async function () {
       `
 POST / HTTP/1.1
 accept: */*
-accept-encoding: gzip, deflate, br
+accept-encoding: gzip
+accept-encoding: deflate
+accept-encoding: br
 connection: close
 content-length: 18
 content-type: application/json

@@ -79,6 +79,51 @@ class RequestState {
     this._response = response;
   }
 
+  public headers(kind: HeaderKind): NodeJS.Dict<string | string[] | number> {
+    switch (kind) {
+      case HeaderKind.REQUEST:
+        return this._request.headers;
+      case HeaderKind.RESPONSE:
+        return this._response.getHeaders();
+      case HeaderKind.REQUEST_TRAILERS:
+        return this._request.trailers;
+      case HeaderKind.RESPONSE_TRAILERS:
+        return (this._response as BufferedResponse).buffer.trailers;
+    }
+  }
+
+  public setHeader(kind: HeaderKind, key: string, value: string[]) {
+    switch (kind) {
+      case HeaderKind.REQUEST:
+        this._request.headers[key] = value;
+        break;
+      case HeaderKind.RESPONSE:
+        this._response.setHeader(key, value);
+        break;
+      case HeaderKind.REQUEST_TRAILERS:
+        this._request.trailers[key] = value[0];
+        break;
+      case HeaderKind.RESPONSE_TRAILERS:
+        (this._response as BufferedResponse).buffer.trailers[key] = value;
+    }
+  }
+
+  public removeHeader(kind: HeaderKind, key: string) {
+    switch (kind) {
+      case HeaderKind.REQUEST:
+        delete this._request.headers[key];
+        break;
+      case HeaderKind.RESPONSE:
+        this._response.removeHeader(key);
+        break;
+      case HeaderKind.REQUEST_TRAILERS:
+        delete this._request.trailers[key];
+        break;
+      case HeaderKind.RESPONSE_TRAILERS:
+        delete (this._response as BufferedResponse).buffer.trailers[key];
+    }
+  }
+
   public get nextCalled(): boolean {
     return this._nextCalled;
   }
@@ -217,7 +262,7 @@ class HttpHandler {
 
   // Circumvent null checking with !, setMemory must be called before
   // host functions.
-  private memory!: Uint8Array;
+  private memory!: WebAssembly.Memory;
 
   public getImport() {
     return {
@@ -232,7 +277,9 @@ class HttpHandler {
       log: this.log.bind(this),
       log_enabled: this.logEnabled.bind(this),
       read_body: this.readBody.bind(this),
+      add_header_value: this.addHeader.bind(this),
       set_header_value: this.setHeader.bind(this),
+      remove_header: this.removeHeader.bind(this),
       set_method: this.setMethod.bind(this),
       set_status_code: this.setStatusCode.bind(this),
       set_uri: this.setUri.bind(this),
@@ -241,7 +288,7 @@ class HttpHandler {
   }
 
   public setMemory(memory: WebAssembly.Memory) {
-    this.memory = new Uint8Array(memory.buffer);
+    this.memory = memory;
   }
 
   private enableFeatures(features: number): number {
@@ -265,20 +312,7 @@ class HttpHandler {
     bufLimit: number,
   ): bigint {
     const state = stateStorage.getStore()!;
-    let headers: NodeJS.Dict<string | string[] | number>;
-    switch (kind) {
-      case HeaderKind.REQUEST:
-        headers = state.request.headers;
-        break;
-      case HeaderKind.RESPONSE:
-        headers = state.response.getHeaders();
-        break;
-      case HeaderKind.REQUEST_TRAILERS:
-        headers = state.request.trailers;
-        break;
-      case HeaderKind.RESPONSE_TRAILERS:
-        headers = (state.response as BufferedResponse).buffer.trailers;
-    }
+    const headers = state.headers(kind);
 
     const headerNames = Object.keys(headers);
     return this.writeNullTerminated(buf, bufLimit, headerNames);
@@ -296,29 +330,49 @@ class HttpHandler {
     }
 
     const state = stateStorage.getStore()!;
-    let headers: NodeJS.Dict<string | string[] | number>;
-    switch (kind) {
-      case HeaderKind.REQUEST:
-        headers = state.request.headers;
-        break;
-      case HeaderKind.RESPONSE:
-        headers = state.response.getHeaders();
-        break;
-      case HeaderKind.REQUEST_TRAILERS:
-        headers = state.request.trailers;
-        break;
-      case HeaderKind.RESPONSE_TRAILERS:
-        headers = (state.response as BufferedResponse).buffer.trailers;
-    }
+    const headers = state.headers(kind);
 
     const n = this.mustReadString('name', name, nameLen).toLowerCase();
-    let values: string[] = [];
     const value = headers[n];
+    let values: string[] = [];
     if (value) {
       if (Array.isArray(value)) {
         values = value;
       } else {
-        values.push(value.toString());
+        // NodeJS array vs join behavior is dependent on header name
+        // https://nodejs.org/api/http.html#messageheaders
+        switch (n) {
+          // TODO(anuraaga): date is not mentioned as a header where duplicates are discarded.
+          // However, since it has a comma inside, it seems it must be handled as a single
+          // string. Double-check this.
+          case 'date':
+          case 'age':
+          case 'authorization':
+          case 'content-length':
+          case 'content-type':
+          case 'etag':
+          case 'expires':
+          case 'from':
+          case 'host':
+          case 'if-modified-since':
+          case 'if-unmodified-since':
+          case 'last-modified':
+          case 'location':
+          case 'max-forwards':
+          case 'proxy-authorization':
+          case 'referer':
+          case 'retry-after':
+          case 'server':
+          case 'user-agent':
+            values = [value as string];
+            break;
+          case 'cookie':
+            values = (value as string).split('; ');
+            break;
+          default:
+            values = (value as string).split(', ');
+            break;
+        }
       }
     }
 
@@ -391,7 +445,7 @@ class HttpHandler {
       const start = state.requestBodyReadIndex;
       const end = Math.min(start + bufLimit, body.length);
       const slice = body.subarray(start, end);
-      this.memory.set(slice, buf);
+      this.memoryBuffer.set(slice, buf);
       state.requestBodyReadIndex = end;
       if (end === body.length) {
         return (1n << 32n) | BigInt(slice.length);
@@ -411,7 +465,7 @@ class HttpHandler {
     const start = state.responseBodyReadIndex;
     const end = Math.min(start + bufLimit, body.length);
     const slice = body.subarray(start, end);
-    this.memory.set(slice, buf);
+    this.memoryBuffer.set(slice, buf);
     state.responseBodyReadIndex = end;
     if (end === body.length) {
       return (1n << 32n) | BigInt(slice.length);
@@ -457,6 +511,33 @@ class HttpHandler {
     }
   }
 
+  private addHeader(
+    kind: HeaderKind,
+    name: number,
+    nameLen: number,
+    value: number,
+    valueLen: number,
+  ): void {
+    if (nameLen == 0) {
+      throw new Error('HTTP header name cannot be empty');
+    }
+
+    const n = this.mustReadString('name', name, nameLen);
+    const v = this.mustReadString('value', value, valueLen);
+
+    const headers = stateStorage.getStore()!.headers(kind);
+    const existing = headers[n];
+    let newValue: string[];
+    if (existing) {
+      newValue = Array.isArray(existing)
+        ? existing.concat(v)
+        : [existing.toString(), v];
+    } else {
+      newValue = [v];
+    }
+    stateStorage.getStore()!.setHeader(kind, n, newValue);
+  }
+
   private setHeader(
     kind: HeaderKind,
     name: number,
@@ -467,13 +548,20 @@ class HttpHandler {
     if (nameLen == 0) {
       throw new Error('HTTP header name cannot be empty');
     }
-    if (kind !== HeaderKind.RESPONSE) {
-      throw new Error('TODO: Support non-response set_header');
-    }
 
     const n = this.mustReadString('name', name, nameLen);
     const v = this.mustReadString('value', value, valueLen);
-    stateStorage.getStore()?.response.setHeader(n, v);
+
+    stateStorage.getStore()!.setHeader(kind, n, [v]);
+  }
+
+  private removeHeader(kind: HeaderKind, name: number, nameLen: number): void {
+    if (nameLen == 0) {
+      throw new Error('HTTP header name cannot be empty');
+    }
+
+    const n = this.mustReadString('name', name, nameLen);
+    stateStorage.getStore()?.removeHeader(kind, n);
   }
 
   private setStatusCode(statusCode: number): void {
@@ -510,13 +598,15 @@ class HttpHandler {
     }
 
     if (
-      offset >= this.memory.length ||
-      offset + byteCount >= this.memory.length
+      offset >= this.memoryBuffer.length ||
+      offset + byteCount >= this.memoryBuffer.length
     ) {
-      throw new Error(`out of memory reading ${fieldName}`);
+      throw new Error(
+        `out of memory reading ${fieldName}, offset: ${offset}, byteCount: ${byteCount}`,
+      );
     }
 
-    return this.memory.slice(offset, offset + byteCount);
+    return this.memoryBuffer.slice(offset, offset + byteCount);
   }
 
   private writeStringIfUnderLimit(
@@ -533,7 +623,7 @@ class HttpHandler {
       return vLen;
     }
 
-    this.memory.set(v, offset);
+    this.memoryBuffer.set(v, offset);
     return vLen;
   }
 
@@ -559,13 +649,17 @@ class HttpHandler {
     let offset = 0;
     for (const s of encodedInput) {
       const sLen = s.length;
-      this.memory.set(s, buf + offset);
+      this.memoryBuffer.set(s, buf + offset);
       offset += sLen;
-      this.memory[buf + offset] = 0;
+      this.memoryBuffer[buf + offset] = 0;
       offset++;
     }
 
     return countLen;
+  }
+
+  private get memoryBuffer(): Uint8Array {
+    return new Uint8Array(this.memory.buffer);
   }
 }
 
@@ -611,18 +705,23 @@ export default async (options: Options) => {
         }
         const state = new RequestState(req, res);
         stateStorage.run(state, () => {
-          const ctxNext = handleRequest();
-          if ((ctxNext & 0x1n) !== 0x1n) {
-            // wasm populated a response so end it.
-            res.end();
-          } else {
-            next();
-            state.nextCalled = true;
-            const ctx = Number(ctxNext >> 32n);
-            handleResponse(ctx);
-          }
-          if (mwState.features.has(Feature.BUFFER_RESPONSE)) {
-            (res as BufferedResponse).buffer.release();
+          try {
+            const ctxNext = handleRequest();
+            if ((ctxNext & 0x1n) !== 0x1n) {
+              // wasm populated a response so end it.
+              res.end();
+            } else {
+              next();
+              state.nextCalled = true;
+              const ctx = Number(ctxNext >> 32n);
+              handleResponse(ctx);
+            }
+            if (mwState.features.has(Feature.BUFFER_RESPONSE)) {
+              (res as BufferedResponse).buffer.release();
+            }
+          } catch (e) {
+            console.log('exception in wasm middleware', e);
+            throw e;
           }
         });
       });
